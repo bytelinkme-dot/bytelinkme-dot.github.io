@@ -68,6 +68,19 @@
   .logout-link{font-size:13.5px;color:var(--slate);font-weight:800;background:var(--card);padding:10px 18px;border-radius:999px;}
   .logout-link:hover{color:var(--ink);}
 
+  .edit-btn{background:var(--blue-soft);color:#1E5FBF;border:none;font-size:12px;font-weight:800;padding:7px 12px;border-radius:999px;margin-right:8px;}
+  .edit-btn:hover{background:var(--blue);color:#fff;}
+  .modal-overlay{display:none;position:fixed;inset:0;background:rgba(33,29,69,0.45);z-index:50;align-items:center;justify-content:center;padding:20px;}
+  .modal-overlay.active{display:flex;}
+  .modal-card{background:var(--card);border-radius:26px;padding:32px;max-width:480px;width:100%;max-height:88vh;overflow-y:auto;}
+  .modal-card h3{margin:0 0 20px;font-size:20px;font-weight:600;}
+  .modal-actions{display:flex;gap:12px;margin-top:22px;}
+  .modal-actions .btn-primary{flex:1;justify-content:center;padding:13px 20px;font-size:14px;}
+  .modal-actions .btn-secondary{padding:13px 20px;font-size:14px;}
+  .field textarea{width:100%;padding:13px 18px;border:2px solid var(--line);border-radius:16px;font-size:14.5px;font-family:inherit;font-weight:600;background:var(--bg);color:var(--ink);resize:vertical;min-height:80px;transition:border-color .15s ease;}
+  .field textarea:focus{outline:none;border-color:var(--purple);background:#fff;}
+  .desc-cell{max-width:260px;color:var(--slate);font-size:12.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;display:block;}
+
   @media(max-width:860px){
     .stat-row{grid-template-columns:1fr 1fr;}
   }
@@ -100,10 +113,21 @@
   <div class="admin-wrap">
     <div class="admin-top">
       <div>
+        <h2>Course catalog</h2>
+        <p>Add, edit, or remove the courses shown on the site.</p>
+      </div>
+      <a class="logout-link" href="javascript:void(0)" onclick="adminLogout()">Sign out</a>
+    </div>
+    <div style="margin-bottom:18px;"><button class="btn-primary" style="padding:12px 22px;font-size:13.5px;" onclick="openCourseModal()">+ Add course</button></div>
+    <div id="courses-table-wrap"></div>
+    <p style="font-size:12px;color:var(--slate);font-weight:600;margin:12px 2px 0;">Add/edit/delete not saving? Your Supabase <code>courses</code> table likely only has a SELECT policy. In the Supabase SQL editor run:<br>
+    <code style="display:block;background:var(--purple-soft);color:var(--ink);padding:8px 12px;border-radius:10px;margin-top:6px;white-space:pre-wrap;">create policy "admin write courses" on courses for all using (true) with check (true);</code></p>
+
+    <div class="admin-top" style="margin-top:56px;">
+      <div>
         <h2>Registered students</h2>
         <p>Every registration submitted through the site, stored in the shared Byte Link database.</p>
       </div>
-      <a class="logout-link" href="javascript:void(0)" onclick="adminLogout()">Sign out</a>
     </div>
     <div class="stat-row" id="admin-stats"></div>
     <div class="admin-toolbar">
@@ -127,6 +151,38 @@
       <button class="btn-secondary" style="padding:11px 20px;font-size:13px;" onclick="exportNewsletterCSV()">Export CSV</button>
     </div>
     <div id="newsletter-table-wrap"></div>
+  </div>
+</div>
+
+<div class="modal-overlay" id="course-modal-overlay">
+  <div class="modal-card">
+    <h3 id="course-modal-title">Add course</h3>
+    <input type="hidden" id="course-id">
+    <div class="field">
+      <label>Title</label>
+      <input type="text" id="course-title" placeholder="e.g. Intro to Web Development">
+    </div>
+    <div class="field">
+      <label>Description</label>
+      <textarea id="course-description" placeholder="Short description shown to students"></textarea>
+    </div>
+    <div class="field">
+      <label>Price</label>
+      <input type="text" id="course-price" placeholder="e.g. 199 or $199">
+    </div>
+    <div class="field">
+      <label>Duration</label>
+      <input type="text" id="course-duration" placeholder="e.g. 6 weeks">
+    </div>
+    <div class="field">
+      <label>Sort order</label>
+      <input type="number" id="course-sort-order" placeholder="0">
+    </div>
+    <p class="form-note" id="course-modal-error" style="color:#C24522;display:none;text-align:left;margin-top:0;"></p>
+    <div class="modal-actions">
+      <button class="btn-secondary" onclick="closeCourseModal()">Cancel</button>
+      <button class="btn-primary" onclick="saveCourse()">Save course</button>
+    </div>
   </div>
 </div>
 
@@ -155,10 +211,41 @@ function rowToStudent(r){
 }
 function rowToSub(r){ return { id:r.id, email:r.email, subscribedAt:r.subscribed_at }; }
 
+function rowToCourse(r){
+  return { id:r.id, title:r.title, description:r.description, price:r.price,
+    duration:r.duration, sortOrder:r.sort_order };
+}
 async function loadCourses(){
   const { data, error } = await sb.from('courses').select('*').order('sort_order', { ascending:true });
   if(error){ console.error('Supabase loadCourses error', error); COURSES = []; return; }
-  COURSES = (data||[]).map(r => ({ id:r.id, title:r.title }));
+  COURSES = (data||[]).map(rowToCourse);
+}
+async function createCourseRow(course){
+  const { data, error } = await sb.from('courses').insert({
+    title: course.title, description: course.description, price: course.price,
+    duration: course.duration, sort_order: course.sortOrder
+  }).select();
+  if(!error && (!data || data.length === 0)){
+    return { code:'RLS_BLOCKED', message:'Insert was silently blocked — likely missing an INSERT policy on the courses table.' };
+  }
+  return error;
+}
+async function updateCourseRow(id, course){
+  const { data, error } = await sb.from('courses').update({
+    title: course.title, description: course.description, price: course.price,
+    duration: course.duration, sort_order: course.sortOrder
+  }).eq('id', id).select();
+  if(!error && (!data || data.length === 0)){
+    return { code:'RLS_BLOCKED', message:'Update was silently blocked — likely missing an UPDATE policy on the courses table.' };
+  }
+  return error;
+}
+async function deleteCourseRow(id){
+  const { data, error } = await sb.from('courses').delete().eq('id', id).select();
+  if(!error && (!data || data.length === 0)){
+    return { code:'RLS_BLOCKED', message:'Delete was silently blocked — likely missing a DELETE policy on the courses table.' };
+  }
+  return error;
 }
 async function loadStudents(){
   const { data, error } = await sb.from('students').select('*').order('registered_at', { ascending:false });
@@ -196,12 +283,97 @@ function adminLogout(){
 
 async function renderAdmin(){
   await loadCourses();
+  renderCoursesTable();
   await loadStudents();
   const sel = document.getElementById('filter-course');
   sel.innerHTML = '<option value="">All courses</option>' + COURSES.map(c=>`<option value="${c.id}">${c.title}</option>`).join('');
   renderAdminStats(); renderAdminTable();
   await loadNewsletter();
   renderNewsletterStats(); renderNewsletterTable();
+}
+
+function escapeHtml(str){
+  return String(str==null?'':str).replace(/[&<>"']/g, m => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[m]));
+}
+function renderCoursesTable(){
+  const wrap = document.getElementById('courses-table-wrap');
+  if(COURSES.length === 0){ wrap.innerHTML = `<div class="empty-state">No courses yet — add your first course to get started.</div>`; return; }
+  wrap.innerHTML = `
+    <table>
+      <thead><tr><th>Title</th><th>Description</th><th>Price</th><th>Duration</th><th>Order</th><th></th></tr></thead>
+      <tbody>
+        ${COURSES.map(c=>`
+          <tr>
+            <td><strong>${escapeHtml(c.title)}</strong></td>
+            <td><span class="desc-cell">${escapeHtml(c.description || '—')}</span></td>
+            <td>${escapeHtml(c.price || '—')}</td>
+            <td>${escapeHtml(c.duration || '—')}</td>
+            <td>${c.sortOrder ?? '—'}</td>
+            <td style="white-space:nowrap;">
+              <button class="edit-btn" onclick="openCourseModal('${c.id}')">Edit</button>
+              <button class="del-btn" onclick="deleteCourse('${c.id}')">Delete</button>
+            </td>
+          </tr>`).join('')}
+      </tbody>
+    </table>`;
+}
+function openCourseModal(id){
+  const c = id ? COURSES.find(x => String(x.id) === String(id)) : null;
+  document.getElementById('course-modal-title').textContent = c ? 'Edit course' : 'Add course';
+  document.getElementById('course-id').value = c ? c.id : '';
+  document.getElementById('course-title').value = c ? (c.title || '') : '';
+  document.getElementById('course-description').value = c ? (c.description || '') : '';
+  document.getElementById('course-price').value = c ? (c.price ?? '') : '';
+  document.getElementById('course-duration').value = c ? (c.duration || '') : '';
+  document.getElementById('course-sort-order').value = c ? (c.sortOrder ?? '') : (COURSES.length);
+  document.getElementById('course-modal-error').style.display = 'none';
+  document.getElementById('course-modal-overlay').classList.add('active');
+}
+function closeCourseModal(){
+  document.getElementById('course-modal-overlay').classList.remove('active');
+}
+async function saveCourse(){
+  const id = document.getElementById('course-id').value;
+  const title = document.getElementById('course-title').value.trim();
+  const errEl = document.getElementById('course-modal-error');
+  if(!title){ errEl.textContent = 'Title is required.'; errEl.style.display = 'block'; return; }
+  const course = {
+    title,
+    description: document.getElementById('course-description').value.trim(),
+    price: document.getElementById('course-price').value.trim(),
+    duration: document.getElementById('course-duration').value.trim(),
+    sortOrder: document.getElementById('course-sort-order').value === '' ? 0 : Number(document.getElementById('course-sort-order').value)
+  };
+  const error = id ? await updateCourseRow(id, course) : await createCourseRow(course);
+  if(error){
+    errEl.textContent = error.code === 'RLS_BLOCKED'
+      ? 'Save was blocked by Supabase Row Level Security — this account has no INSERT/UPDATE policy on "courses". See the setup note below the table.'
+      : 'Could not save course — check the console for details.';
+    errEl.style.display = 'block'; console.error('Supabase saveCourse error', error); return;
+  }
+  closeCourseModal();
+  await loadCourses();
+  renderCoursesTable();
+  const sel = document.getElementById('filter-course');
+  sel.innerHTML = '<option value="">All courses</option>' + COURSES.map(c=>`<option value="${c.id}">${c.title}</option>`).join('');
+}
+async function deleteCourse(id){
+  const c = COURSES.find(x => String(x.id) === String(id));
+  const label = c ? c.title : 'this course';
+  if(!confirm(`Delete "${label}"? Students already registered for it will keep their record, but it will disappear from the site and filters.`)) return;
+  const error = await deleteCourseRow(id);
+  if(error){
+    const msg = error.code === 'RLS_BLOCKED'
+      ? 'Delete was blocked by Supabase Row Level Security — this account has no DELETE policy on "courses". See the setup note below the course table.'
+      : (error.code === '23503'
+        ? 'Could not delete — students are still registered for this course. Remove or reassign them first.'
+        : 'Could not delete course — check the console for details.');
+    alert(msg); console.error('Supabase deleteCourse error', error); return;
+  }
+  await loadCourses();
+  renderCoursesTable();
+  const sel = document.getElementById('filter-course');
+  sel.innerHTML = '<option value="">All courses</option>' + COURSES.map(c=>`<option value="${c.id}">${c.title}</option>`).join('');
 }
 function renderAdminStats(){
   const total = studentsCache.length;
