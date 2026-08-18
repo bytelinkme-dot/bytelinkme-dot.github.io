@@ -378,7 +378,7 @@ async function deleteCourse(id){
 function renderAdminStats(){
   const total = studentsCache.length;
   const uniqueCourses = new Set(studentsCache.map(s=>s.courseId)).size;
-  const topCourse = COURSES.map(c=>({c, n: studentsCache.filter(s=>s.courseId===c.id).length})).sort((a,b)=>b.n-a.n)[0];
+  const topCourse = COURSES.map(c=>({c, n: studentsCache.filter(s=>String(s.courseId)===String(c.id)).length})).sort((a,b)=>b.n-a.n)[0];
   const thisWeek = studentsCache.filter(s=>(Date.now()-new Date(s.registeredAt).getTime())<7*24*60*60*1000).length;
   const cols = [PALETTE[0],PALETTE[1],PALETTE[2],PALETTE[3]];
   document.getElementById('admin-stats').innerHTML = `
@@ -392,7 +392,7 @@ function renderAdminTable(){
   const courseFilter = document.getElementById('filter-course').value;
   const search = document.getElementById('search-student').value.toLowerCase();
   let rows = studentsCache.filter(s=>{
-    const matchCourse = !courseFilter || s.courseId === courseFilter;
+    const matchCourse = !courseFilter || String(s.courseId) === String(courseFilter);
     const matchSearch = !search || (s.firstName+' '+s.lastName+' '+s.email).toLowerCase().includes(search);
     return matchCourse && matchSearch;
   }).sort((a,b)=> new Date(b.registeredAt) - new Date(a.registeredAt));
